@@ -52,12 +52,16 @@ class BlackjackView(View):
         return True
 
     def get_embed(self, title):
+        # 將手牌轉換為純數值字串 (例如將 '10♥' 簡化為 '10')
+        user_display = [card[:-1] for card in self.user_hand]
+        dealer_display = [self.dealer_hand[0][:-1], "🎴"]
+        
         embed = discord.Embed(title=title, color=discord.Color.green())
-        embed.add_field(name="你的手牌", value=f"{', '.join(self.user_hand)} (點數: {calculate_score(self.user_hand)})", inline=False)
-        embed.add_field(name="莊家手牌", value=f"{self.dealer_hand[0]}, 🎴", inline=False)
+        embed.add_field(name="你的手牌", value=f"{', '.join(user_display)} (點數: {calculate_score(self.user_hand)})", inline=False)
+        embed.add_field(name="莊家手牌", value=f"{', '.join(dealer_display)}", inline=False)
         return embed
 
-    @discord.ui.button(label="Hit (要牌)", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="抽牌", style=discord.ButtonStyle.primary, custom_id="hit")
     async def hit(self, interaction: discord.Interaction, button: Button):
         self.user_hand.append(self.deck.pop())
         score = calculate_score(self.user_hand)
@@ -67,7 +71,7 @@ class BlackjackView(View):
         else:
             await interaction.response.edit_message(embed=self.get_embed("繼續抽牌..."), view=self)
 
-    @discord.ui.button(label="Stand (停牌)", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="跳過 (停牌)", style=discord.ButtonStyle.secondary, custom_id="stand")
     async def stand(self, interaction: discord.Interaction, button: Button):
         while calculate_score(self.dealer_hand) < 17:
             self.dealer_hand.append(self.deck.pop())
@@ -75,9 +79,13 @@ class BlackjackView(View):
         u_s, d_s = calculate_score(self.user_hand), calculate_score(self.dealer_hand)
         res = "🎉 你贏了！" if d_s > 21 or u_s > d_s else "😭 莊家獲勝" if u_s < d_s else "平手！"
         
+        # 結果頁面也顯示數字化牌面
+        user_display = [card[:-1] for card in self.user_hand]
+        dealer_display = [card[:-1] for card in self.dealer_hand]
+        
         embed = discord.Embed(title=f"結果：{res}", color=discord.Color.gold())
-        embed.add_field(name="你的牌", value=f"{', '.join(self.user_hand)} ({u_s})")
-        embed.add_field(name="莊家牌", value=f"{', '.join(self.dealer_hand)} ({d_s})")
+        embed.add_field(name="你的牌", value=f"{', '.join(user_display)} ({u_s})")
+        embed.add_field(name="莊家牌", value=f"{', '.join(dealer_display)} ({d_s})")
         await interaction.response.edit_message(embed=embed, view=None)
         self.stop()
 
