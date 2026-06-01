@@ -80,32 +80,36 @@ class GameView(View):
     def get_embed(self, title):
         embed = discord.Embed(title=title, color=discord.Color.dark_purple())
         
-        # 檢查遊戲是否結束
-        game_ended = (self.p1_stood and self.p2_stood) or (sum(self.p1_hand) > 21) or (sum(self.p2_hand) > 21)
-        
-        # 顯示玩家 1 的牌
+        # 1. 顯示玩家牌 (正常顯示)
         p1_status = " (已跳過)" if self.p1_stood else ""
-        embed.add_field(name=f"{self.p1.name} (玩家1)", value=f"{self.p1_hand} (點數: {sum(self.p1_hand)}){p1_status}", inline=False)
+        embed.add_field(name=f"{self.p1.name}", value=f"{self.p1_hand} (點數: {sum(self.p1_hand)}){p1_status}", inline=False)
         
-        # 顯示玩家 2 (電腦) 的牌 - 如果遊戲還沒結束，只顯示第一張
-        if not game_ended:
-            # 遊戲還在進行中，隱藏第二張牌
-            if len(self.p2_hand) > 1:
-                p2_display = f"[{self.p2_hand[0]}, ?]"
-            else:
-                p2_display = f"{self.p2_hand}"
+        # 2. 判斷電腦的顯示方式
+        # 如果遊戲結束 (p1_stood 和 p2_stood 都為 True 或有人爆掉)，則顯示全部的牌
+        game_ended = (self.p1_stood and self.p2_stood) or (sum(self.p1_hand) > 21) or (sum(self.p2_hand) > 21)
+        if game_ended:
             p2_status = " (已跳過)" if self.p2_stood else ""
-            embed.add_field(name=f"{self.p2.name if self.p2 else '電腦'} (玩家2)", value=f"{p2_display}{p2_status}", inline=False)
+            p2_display = f"{self.p2_hand} (點數: {sum(self.p2_hand)}){p2_status}"
         else:
-            # 遊戲結束，顯示所有牌
+            # 遊戲進行中：只顯示第一張，後面顯示 ? (但要根據牌數增加問號)
+            # 例如：有 3 張牌，顯示為 [A, ?, ?]
+            hidden_cards = ["?"] * (len(self.p2_hand) - 1)
+            if hidden_cards:
+                p2_display = f"[{self.p2_hand[0]}, {', '.join(hidden_cards)}]"
+            else:
+                p2_display = f"[{self.p2_hand[0]}]"
             p2_status = " (已跳過)" if self.p2_stood else ""
-            embed.add_field(name=f"{self.p2.name if self.p2 else '電腦'} (玩家2)", value=f"{self.p2_hand} (點數: {sum(self.p2_hand)}){p2_status}", inline=False)
+            p2_display += p2_status
+            
+        embed.add_field(name=f"{self.p2.name if self.p2 else '電腦'}", value=p2_display, inline=False)
         
+        # 3. 顯示當前回合
         if self.is_multi:
             turn_text = self.turn.name if self.turn else "等待中"
         else:
             turn_text = self.p1.name if self.is_player_turn else "電腦"
         embed.add_field(name="當前回合", value=turn_text, inline=False)
+        
         return embed
 
     def switch_turn(self):
