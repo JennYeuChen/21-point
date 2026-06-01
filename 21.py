@@ -26,8 +26,13 @@ class StartView(View):
 
     @discord.ui.button(label="單人模式", style=discord.ButtonStyle.primary)
     async def single(self, interaction: discord.Interaction, button: Button):
-        deck = [random.randint(1, 10) for _ in range(52)]
-        view = GameView(self.owner, None, deck, [deck.pop(), deck.pop()], [deck.pop(), deck.pop()], False)
+        # 使用標準 52 張牌牌組
+        deck = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 10, 10, 10] * 4
+        random.shuffle(deck)
+        # 發初始牌
+        p1_hand = [deck.pop(), deck.pop()]
+        p2_hand = [deck.pop(), deck.pop()]
+        view = GameView(self.owner, None, deck, p1_hand, p2_hand, False)
         await interaction.response.edit_message(content='', embed=view.get_embed("單人對局中"), view=view)
 
     @discord.ui.button(label="多人模式", style=discord.ButtonStyle.secondary)
@@ -48,8 +53,13 @@ class JoinView(View):
     async def join(self, interaction: discord.Interaction, button: Button):
         if interaction.user == self.p1:
             return await interaction.response.send_message("不能自己跟自己玩！", ephemeral=True)
-        deck = [random.randint(1, 10) for _ in range(52)]
-        view = GameView(self.p1, interaction.user, deck, [deck.pop(), deck.pop()], [deck.pop(), deck.pop()], True)
+        # 使用標準 52 張牌牌組
+        deck = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 10, 10, 10] * 4
+        random.shuffle(deck)
+        # 發初始牌
+        p1_hand = [deck.pop(), deck.pop()]
+        p2_hand = [deck.pop(), deck.pop()]
+        view = GameView(self.p1, interaction.user, deck, p1_hand, p2_hand, True)
         await interaction.response.edit_message(content="遊戲開始！", embed=view.get_embed("多人回合"), view=view)
 
 # --- 3. 回合制操作介面 (GameView) ---
@@ -80,36 +90,29 @@ class GameView(View):
     def get_embed(self, title):
         embed = discord.Embed(title=title, color=discord.Color.dark_purple())
         
-        # 1. 顯示玩家牌 (正常顯示)
+        # 顯示玩家牌
         p1_status = " (已跳過)" if self.p1_stood else ""
         embed.add_field(name=f"{self.p1.name}", value=f"{self.p1_hand} (點數: {sum(self.p1_hand)}){p1_status}", inline=False)
         
-        # 2. 判斷電腦的顯示方式
-        # 如果遊戲結束 (p1_stood 和 p2_stood 都為 True 或有人爆掉)，則顯示全部的牌
+        # 檢查遊戲是否結束
         game_ended = (self.p1_stood and self.p2_stood) or (sum(self.p1_hand) > 21) or (sum(self.p2_hand) > 21)
-        if game_ended:
+        
+        # 電腦顯示邏輯
+        if game_ended: # 遊戲結束，全開
             p2_status = " (已跳過)" if self.p2_stood else ""
             p2_display = f"{self.p2_hand} (點數: {sum(self.p2_hand)}){p2_status}"
         else:
-            # 遊戲進行中：只顯示第一張，後面顯示 ? (但要根據牌數增加問號)
-            # 例如：有 3 張牌，顯示為 [A, ?, ?]
-            hidden_cards = ["?"] * (len(self.p2_hand) - 1)
-            if hidden_cards:
-                p2_display = f"[{self.p2_hand[0]}, {', '.join(hidden_cards)}]"
+            # 遊戲中：顯示已知的牌，最後一張用 ?
+            # 顯示目前電腦抽到的所有牌，但最後一張顯示為 ?
+            if len(self.p2_hand) > 1:
+                known_cards = self.p2_hand[:-1]
+                p2_display = f"{known_cards} + [?]"
             else:
-                p2_display = f"[{self.p2_hand[0]}]"
+                p2_display = f"{self.p2_hand}"
             p2_status = " (已跳過)" if self.p2_stood else ""
             p2_display += p2_status
             
         embed.add_field(name=f"{self.p2.name if self.p2 else '電腦'}", value=p2_display, inline=False)
-        
-        # 3. 顯示當前回合
-        if self.is_multi:
-            turn_text = self.turn.name if self.turn else "等待中"
-        else:
-            turn_text = self.p1.name if self.is_player_turn else "電腦"
-        embed.add_field(name="當前回合", value=turn_text, inline=False)
-        
         return embed
 
     def switch_turn(self):
@@ -162,7 +165,7 @@ class GameView(View):
                 # 單人模式：玩家操作完，輪到電腦
                 self.is_player_turn = False
                 await interaction.response.edit_message(content='', embed=self.get_embed("處理中..."), view=None)
-                await self.computer_decision(interaction)
+                await self.ai_turn(interaction)
 
     @discord.ui.button(label="跳過", style=discord.ButtonStyle.secondary)
     async def stand(self, interaction: discord.Interaction, button: Button):
@@ -194,9 +197,9 @@ class GameView(View):
         else:
             # 單人模式：玩家跳過，輪到電腦
             self.is_player_turn = False
-            await self.computer_decision(interaction)
+            await self.ai_turn(interaction)
 
-    async def computer_decision(self, interaction):
+    async def ai_turn(self, interaction):
         # 顯示電腦正在思考
         await interaction.followup.edit_message(
             message_id=interaction.message.id,
@@ -204,37 +207,24 @@ class GameView(View):
             embed=self.get_embed("電腦回合"),
             view=None
         )
-        await asyncio.sleep(1.5)
+        await asyncio.sleep(1)
         
-        # 電腦邏輯：點數 < 17 抽牌，否則跳過
-        if sum(self.p2_hand) < 17:
-            self.p2_hand.append(self.deck.pop())
-            # 檢查是否爆掉
-            if sum(self.p2_hand) > 21:
-                await self.check_game_end(interaction)
-                return
-            # 電腦抽了一張牌，回傳給玩家繼續
-            self.is_player_turn = True
+        # 電腦逐張抽牌，讓玩家看到過程
+        while sum(self.p2_hand) < 17:
+            new_card = self.deck.pop() # 從牌堆取出一張
+            self.p2_hand.append(new_card)
+            
+            # 更新訊息：讓玩家看到電腦目前的狀況
             await interaction.followup.edit_message(
                 message_id=interaction.message.id,
-                content="",
-                embed=self.get_embed("電腦抽了一張牌，換你"),
-                view=self
+                content=f"電腦抽了一張牌...",
+                embed=self.get_embed("電腦回合")
             )
-        else:
-            # 電腦決定跳過
-            self.p2_stood = True
-            # 如果玩家也跳過，就開牌；否則換人
-            if self.p1_stood:
-                await self.check_game_end(interaction)
-            else:
-                self.is_player_turn = True
-                await interaction.followup.edit_message(
-                    message_id=interaction.message.id,
-                    content="",
-                    embed=self.get_embed("電腦跳過了，換你"),
-                    view=self
-                )
+            await asyncio.sleep(1)
+        
+        self.p2_stood = True
+        # 檢查是否爆掉或結束
+        await self.check_game_end(interaction)
 
     async def show_result(self, interaction):
         p1_score = sum(self.p1_hand)
