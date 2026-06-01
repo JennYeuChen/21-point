@@ -31,9 +31,9 @@ class StartView(View):
         # 2. 洗牌 (非常重要)
         random.shuffle(deck)
         
-        # 3. 發牌：從 deck 中取出兩張，這兩張會從 deck 中永久移除
-        p1_hand = [deck.pop(), deck.pop()]
-        p2_hand = [deck.pop(), deck.pop()]
+        # 3. 發牌：從 deck 中取出一張
+        p1_hand = [deck.pop()]
+        p2_hand = [deck.pop()]
         
         # 4. 傳入遊戲介面
         view = GameView(self.owner, None, deck, p1_hand, p2_hand, False)
@@ -62,9 +62,9 @@ class JoinView(View):
         # 2. 洗牌 (非常重要)
         random.shuffle(deck)
         
-        # 3. 發牌：從 deck 中取出兩張，這兩張會從 deck 中永久移除
-        p1_hand = [deck.pop(), deck.pop()]
-        p2_hand = [deck.pop(), deck.pop()]
+        # 3. 發牌：從 deck 中取出一張
+        p1_hand = [deck.pop()]
+        p2_hand = [deck.pop()]
         
         # 4. 傳入遊戲介面
         view = GameView(self.p1, interaction.user, deck, p1_hand, p2_hand, True)
