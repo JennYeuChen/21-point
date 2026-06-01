@@ -29,9 +29,9 @@ class StartView(View):
         # 使用標準 52 張牌牌組
         deck = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 10, 10, 10] * 4
         random.shuffle(deck)
-        # 發初始牌
-        p1_hand = [deck.pop(), deck.pop()]
-        p2_hand = [deck.pop(), deck.pop()]
+        # 發初始牌（只抽一張）
+        p1_hand = [deck.pop()]
+        p2_hand = [deck.pop()]
         view = GameView(self.owner, None, deck, p1_hand, p2_hand, False)
         await interaction.response.edit_message(content='', embed=view.get_embed("單人對局中"), view=view)
 
@@ -56,9 +56,9 @@ class JoinView(View):
         # 使用標準 52 張牌牌組
         deck = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 10, 10, 10] * 4
         random.shuffle(deck)
-        # 發初始牌
-        p1_hand = [deck.pop(), deck.pop()]
-        p2_hand = [deck.pop(), deck.pop()]
+        # 發初始牌（只抽一張）
+        p1_hand = [deck.pop()]
+        p2_hand = [deck.pop()]
         view = GameView(self.p1, interaction.user, deck, p1_hand, p2_hand, True)
         await interaction.response.edit_message(content="遊戲開始！", embed=view.get_embed("多人回合"), view=view)
 
@@ -186,22 +186,45 @@ class GameView(View):
             self.is_player_turn = False
             await self.computer_decision(interaction, log)
 
+    def calculate_risk(self):
+        # 統計剩餘牌堆中 > 5 的牌比例
+        big_cards = sum(1 for card in self.deck if card > 5)
+        return big_cards / len(self.deck)  # 返回大牌機率
+
     async def computer_decision(self, interaction, log):
-        # 電腦邏輯：玩家已抽牌次數越多，電腦越趨向保守
-        player_aggression = len(self.p1_hand)
-        threshold = 17 if player_aggression < 3 else 15
+        # --- 電腦算牌邏輯 ---
+        # 1. 觀察玩家已知牌 (p1_hand[0])
+        # 2. 觀察剩餘牌堆的威脅 (簡單機率推算)
+        my_total = sum(self.p2_hand)
         
+        # 計算剩餘牌堆的風險
+        risk = self.calculate_risk()
+        
+        # 簡單策略：如果自己點數已經 16+，風險過高，選擇跳過
+        # 如果對手牌面 (已知) 很大，電腦會被迫抽牌嘗試追趕
+        opponent_visible = self.p1_hand[0]
+        
+        # 決策：
+        if my_total <= 14:
+            decision = "抽牌"
+        elif my_total <= 17 and opponent_visible >= 7:
+            decision = "抽牌"  # 看到對方牌大，冒險一下
+        elif my_total <= 16 and risk < 0.5:
+            decision = "抽牌"  # 剩餘牌堆安全，繼續抽
+        else:
+            decision = "跳過"
+
         await asyncio.sleep(1.2)
         
-        if sum(self.p2_hand) < threshold:
-            self.p2_hand.append(self.deck.pop())
-            log += "\n🤖 電腦選擇了【抽牌】。"
+        if decision == "抽牌":
+            new_card = self.deck.pop()
+            self.p2_hand.append(new_card)
+            log += f"\n🤖 電腦看到你的牌，決定【抽牌】。"
             self.is_player_turn = True  # 換回玩家
             await interaction.edit_original_response(embed=self.get_embed("電腦回合", log), view=self)
         else:
             self.p2_stood = True
-            log += "\n🤖 電腦選擇了【跳過】。"
-            # 檢查雙方是否都跳過
+            log += "\n🤖 電腦決定【跳過】。"
             if self.p1_stood:
                 await self.show_result(interaction)
             else:
