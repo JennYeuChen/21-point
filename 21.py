@@ -60,7 +60,8 @@ class GameView(View):
         self.deck, self.is_multi = deck, is_multi
         self.p1_hand, self.p2_hand = p1_hand, p2_hand
         self.p1_stood, self.p2_stood = False, False
-        self.turn = p1 # 當前回合玩家
+        self.turn = p1 # 當前回合玩家（多人模式）
+        self.is_player_turn = True # 單人模式：True=玩家回合，False=電腦回合
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         # 如果是單人模式，只有 p1 能操作
@@ -100,26 +101,20 @@ class GameView(View):
             p2_status = " (已跳過)" if self.p2_stood else ""
             embed.add_field(name=f"{self.p2.name if self.p2 else '電腦'} (玩家2)", value=f"{self.p2_hand} (點數: {sum(self.p2_hand)}){p2_status}", inline=False)
         
-        embed.add_field(name="當前回合", value=f"{self.turn.name if self.turn else '等待中'}", inline=False)
+        if self.is_multi:
+            turn_text = self.turn.name if self.turn else "等待中"
+        else:
+            turn_text = self.p1.name if self.is_player_turn else "電腦"
+        embed.add_field(name="當前回合", value=turn_text, inline=False)
         return embed
 
-    def get_current_hand(self):
-        if self.turn == self.p1:
-            return self.p1_hand
-        else:
-            return self.p2_hand
-
-    def set_current_stood(self):
-        if self.turn == self.p1:
-            self.p1_stood = True
-        else:
-            self.p2_stood = True
-
     def switch_turn(self):
-        if self.turn == self.p1:
-            self.turn = self.p2
-        else:
-            self.turn = self.p1
+        if self.is_multi:
+            # 多人模式：正常切換
+            if self.turn == self.p1:
+                self.turn = self.p2
+            else:
+                self.turn = self.p1
 
     async def check_game_end(self, interaction):
         # 檢查是否雙方都跳過或爆掉
@@ -128,141 +123,114 @@ class GameView(View):
         
         if (self.p1_stood and self.p2_stood) or p1_bust or p2_bust:
             # 遊戲結束
-            if self.is_multi:
-                await self.show_result(interaction)
-            else:
-                await self.show_result_ai(interaction)
+            await self.show_result(interaction)
             return True
         return False
 
     @discord.ui.button(label="抽牌", style=discord.ButtonStyle.primary)
     async def hit(self, interaction: discord.Interaction, button: Button):
-        # 依照玩家身份存牌
+        # 1. 執行抽牌
         if self.is_multi:
             if self.turn == self.p1:
                 self.p1_hand.append(self.deck.pop())
-                if sum(self.p1_hand) > 21:
-                    self.p1_stood = True
             else:
                 self.p2_hand.append(self.deck.pop())
-                if sum(self.p2_hand) > 21:
-                    self.p2_stood = True
-            
-            # 檢查遊戲是否結束
-            if await self.check_game_end(interaction):
-                return
-            
-            # 多人模式：換人
-            self.switch_turn()
-            await interaction.response.edit_message(content='', embed=self.get_embed("回合更新"), view=self)
         else:
-            # 單人模式
             self.p1_hand.append(self.deck.pop())
-            if sum(self.p1_hand) > 21:
-                self.p1_stood = True
-            
+        
+        # 2. 判斷是否爆掉
+        if self.is_multi:
+            current_hand = self.p1_hand if self.turn == self.p1 else self.p2_hand
+        else:
+            current_hand = self.p1_hand
+        
+        if sum(current_hand) > 21:
             # 先回應交互
             await interaction.response.edit_message(content='', embed=self.get_embed("處理中..."), view=None)
-            
-            # 檢查遊戲是否結束
-            if await self.check_game_end(interaction):
-                return
-            
-            # 單人模式：電腦回合
-            await self.ai_turn(interaction)
+            # 直接結算
+            await self.check_game_end(interaction)
+        else:
+            # 3. 換回合
+            if self.is_multi:
+                self.switch_turn()
+                await interaction.response.edit_message(content='', embed=self.get_embed("換你了"), view=self)
+            else:
+                # 單人模式：玩家操作完，輪到電腦
+                self.is_player_turn = False
+                await interaction.response.edit_message(content='', embed=self.get_embed("處理中..."), view=None)
+                await self.computer_decision(interaction)
 
     @discord.ui.button(label="跳過", style=discord.ButtonStyle.secondary)
     async def stand(self, interaction: discord.Interaction, button: Button):
-        # 紀錄此玩家已跳過
+        # 記錄此玩家已跳過
         if self.is_multi:
-            self.set_current_stood()
-            
-            # 檢查是否雙方都跳過
-            if await self.check_game_end(interaction):
-                return
-            
-            # 多人模式：換人
-            self.switch_turn()
-            await interaction.response.edit_message(content='', embed=self.get_embed("回合更新"), view=self)
+            if self.turn == self.p1:
+                self.p1_stood = True
+            else:
+                self.p2_stood = True
         else:
-            # 單人模式
             self.p1_stood = True
-            
-            # 先回應交互
-            await interaction.response.edit_message(content='', embed=self.get_embed("處理中..."), view=None)
-            
-            # 檢查是否雙方都跳過
-            if await self.check_game_end(interaction):
-                return
-            
-            # 單人模式：電腦回合
-            await self.ai_turn(interaction)
-
-    async def ai_turn(self, interaction):
-        # 已經在 hit/stand 中回應過了，直接用 followup 更新
-        await asyncio.sleep(1)
-        while sum(self.p2_hand) < 17:
-            self.p2_hand.append(self.deck.pop())
-            # 使用 followup 進行後續更新
+        
+        # 先回應交互
+        await interaction.response.edit_message(content='', embed=self.get_embed("處理中..."), view=None)
+        
+        # 檢查是否雙方都跳過
+        if await self.check_game_end(interaction):
+            return
+        
+        # 換回合
+        if self.is_multi:
+            self.switch_turn()
             await interaction.followup.edit_message(
                 message_id=interaction.message.id,
                 content='',
-                embed=self.get_embed("電腦回合中...")
-            )
-            await asyncio.sleep(1)
-        
-        self.p2_stood = True
-        
-        # 檢查遊戲是否結束
-        if not await self.check_game_end_ai(interaction):
-            self.turn = self.p1
-            await interaction.followup.edit_message(
-                message_id=interaction.message.id,
-                content='',
-                embed=self.get_embed("輪到你了"),
+                embed=self.get_embed("換你了"),
                 view=self
             )
-
-    async def check_game_end_ai(self, interaction):
-        # 檢查是否雙方都跳過或爆掉
-        p1_bust = sum(self.p1_hand) > 21
-        p2_bust = sum(self.p2_hand) > 21
-        
-        if (self.p1_stood and self.p2_stood) or p1_bust or p2_bust:
-            # 遊戲結束
-            await self.show_result_ai(interaction)
-            return True
-        return False
-
-    async def show_result_ai(self, interaction):
-        p1_score = sum(self.p1_hand)
-        p2_score = sum(self.p2_hand)
-        
-        # 判斷結果
-        if p1_score > 21 and p2_score > 21:
-            res = "雙方都爆掉！平手！"
-        elif p1_score > 21:
-            res = f"🎉 電腦贏了！"
-        elif p2_score > 21:
-            res = f"🎉 {self.p1.name} 贏了！"
-        elif p1_score > p2_score:
-            res = f"🎉 {self.p1.name} 贏了！"
-        elif p2_score > p1_score:
-            res = f"🎉 電腦贏了！"
         else:
-            res = "平手！"
-        
-        final_embed = discord.Embed(title=f"遊戲結束！", color=discord.Color.gold())
-        final_embed.add_field(name="結果", value=res, inline=False)
-        final_embed.add_field(name=f"{self.p1.name}", value=f"{self.p1_hand} ({p1_score} 點)", inline=True)
-        final_embed.add_field(name="電腦", value=f"{self.p2_hand} ({p2_score} 點)", inline=True)
-        
+            # 單人模式：玩家跳過，輪到電腦
+            self.is_player_turn = False
+            await self.computer_decision(interaction)
+
+    async def computer_decision(self, interaction):
+        # 顯示電腦正在思考
         await interaction.followup.edit_message(
             message_id=interaction.message.id,
-            content='',
-            embed=final_embed,
-            view=ResultView(self.p1, self.p2)
+            content="電腦思考中...",
+            embed=self.get_embed("電腦回合"),
+            view=None
         )
+        await asyncio.sleep(1.5)
+        
+        # 電腦邏輯：點數 < 17 抽牌，否則跳過
+        if sum(self.p2_hand) < 17:
+            self.p2_hand.append(self.deck.pop())
+            # 檢查是否爆掉
+            if sum(self.p2_hand) > 21:
+                await self.check_game_end(interaction)
+                return
+            # 電腦抽了一張牌，回傳給玩家繼續
+            self.is_player_turn = True
+            await interaction.followup.edit_message(
+                message_id=interaction.message.id,
+                content="",
+                embed=self.get_embed("電腦抽了一張牌，換你"),
+                view=self
+            )
+        else:
+            # 電腦決定跳過
+            self.p2_stood = True
+            # 如果玩家也跳過，就開牌；否則換人
+            if self.p1_stood:
+                await self.check_game_end(interaction)
+            else:
+                self.is_player_turn = True
+                await interaction.followup.edit_message(
+                    message_id=interaction.message.id,
+                    content="",
+                    embed=self.get_embed("電腦跳過了，換你"),
+                    view=self
+                )
 
     async def show_result(self, interaction):
         p1_score = sum(self.p1_hand)
@@ -272,22 +240,34 @@ class GameView(View):
         if p1_score > 21 and p2_score > 21:
             res = "雙方都爆掉！平手！"
         elif p1_score > 21:
-            res = f"🎉 {self.p2.name} 贏了！"
+            if self.p2:
+                res = f"🎉 {self.p2.name} 贏了！"
+            else:
+                res = f"🎉 電腦贏了！"
         elif p2_score > 21:
             res = f"🎉 {self.p1.name} 贏了！"
         elif p1_score > p2_score:
             res = f"🎉 {self.p1.name} 贏了！"
         elif p2_score > p1_score:
-            res = f"🎉 {self.p2.name} 贏了！"
+            if self.p2:
+                res = f"🎉 {self.p2.name} 贏了！"
+            else:
+                res = f"🎉 電腦贏了！"
         else:
             res = "平手！"
         
         final_embed = discord.Embed(title=f"遊戲結束！", color=discord.Color.gold())
         final_embed.add_field(name="結果", value=res, inline=False)
         final_embed.add_field(name=f"{self.p1.name}", value=f"{self.p1_hand} ({p1_score} 點)", inline=True)
-        final_embed.add_field(name=f"{self.p2.name if self.p2 else '電腦'}", value=f"{self.p2_hand} ({p2_score} 點)", inline=True)
+        p2_name = self.p2.name if self.p2 else "電腦"
+        final_embed.add_field(name=f"{p2_name}", value=f"{self.p2_hand} ({p2_score} 點)", inline=True)
         
-        await interaction.response.edit_message(content='', embed=final_embed, view=ResultView(self.p1, self.p2))
+        await interaction.followup.edit_message(
+            message_id=interaction.message.id,
+            content='',
+            embed=final_embed,
+            view=ResultView(self.p1, self.p2)
+        )
 
 # --- 4. 重賽功能 (ResultView) ---
 class ResultView(View):
