@@ -26,12 +26,16 @@ class StartView(View):
 
     @discord.ui.button(label="單人模式", style=discord.ButtonStyle.primary)
     async def single(self, interaction: discord.Interaction, button: Button):
-        # 使用標準 52 張牌牌組
-        deck = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 10, 10, 10] * 4
+        # 1. 產生一副完整牌組 (共 52 張)
+        deck = [1, 2, 3, 4, 5, 6, 7, 8, 9] * 4 + [10] * 16
+        # 2. 洗牌 (非常重要)
         random.shuffle(deck)
-        # 發初始牌（只抽一張）
-        p1_hand = [deck.pop()]
-        p2_hand = [deck.pop()]
+        
+        # 3. 發牌：從 deck 中取出兩張，這兩張會從 deck 中永久移除
+        p1_hand = [deck.pop(), deck.pop()]
+        p2_hand = [deck.pop(), deck.pop()]
+        
+        # 4. 傳入遊戲介面
         view = GameView(self.owner, None, deck, p1_hand, p2_hand, False)
         await interaction.response.edit_message(content='', embed=view.get_embed("單人對局中"), view=view)
 
@@ -53,12 +57,16 @@ class JoinView(View):
     async def join(self, interaction: discord.Interaction, button: Button):
         if interaction.user == self.p1:
             return await interaction.response.send_message("不能自己跟自己玩！", ephemeral=True)
-        # 使用標準 52 張牌牌組
-        deck = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 10, 10, 10] * 4
+        # 1. 產生一副完整牌組 (共 52 張)
+        deck = [1, 2, 3, 4, 5, 6, 7, 8, 9] * 4 + [10] * 16
+        # 2. 洗牌 (非常重要)
         random.shuffle(deck)
-        # 發初始牌（只抽一張）
-        p1_hand = [deck.pop()]
-        p2_hand = [deck.pop()]
+        
+        # 3. 發牌：從 deck 中取出兩張，這兩張會從 deck 中永久移除
+        p1_hand = [deck.pop(), deck.pop()]
+        p2_hand = [deck.pop(), deck.pop()]
+        
+        # 4. 傳入遊戲介面
         view = GameView(self.p1, interaction.user, deck, p1_hand, p2_hand, True)
         await interaction.response.edit_message(content="遊戲開始！", embed=view.get_embed("多人回合"), view=view)
 
@@ -92,17 +100,13 @@ class GameView(View):
         game_ended = (self.p1_stood and self.p2_stood)
 
         # --- 顯示你的手牌 ---
-        # 初始牌 p1_hand[0] 是隱藏的，後續抽的牌 (p1_hand[1:]) 是公開的
+        # 關鍵：你是 p1，所以你應該要看到自己的完整牌 (p1_hand)
         p1_status = " (已跳過)" if self.p1_stood else ""
         if game_ended:
             p1_display = f"{self.p1_hand} (總分: {sum(self.p1_hand)})"
         else:
-            # 第一張是暗牌[?], 後面的是明牌
-            known_p1 = self.p1_hand[1:]
-            if known_p1:
-                p1_display = f"[?, {', '.join(map(str, known_p1))}]"
-            else:
-                p1_display = "[?]"
+            # 你看到自己的全部：[底牌, 抽到的牌]
+            p1_display = f"{self.p1_hand}"
 
         embed.add_field(name=f"👤 {self.p1.name}", value=p1_display + p1_status, inline=False)
 
@@ -112,7 +116,7 @@ class GameView(View):
         if game_ended:
             p2_display = f"{self.p2_hand} (總分: {sum(self.p2_hand)})"
         else:
-            # 電腦同理，第一張暗牌[?], 後續抽的是明牌
+            # 你只能看到電腦的明牌：[?, 電腦抽到的牌...]
             known_p2 = self.p2_hand[1:]
             if known_p2:
                 p2_display = f"[?, {', '.join(map(str, known_p2))}]"
