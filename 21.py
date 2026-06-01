@@ -91,22 +91,34 @@ class GameView(View):
         embed = discord.Embed(title=title, color=discord.Color.dark_purple())
         game_ended = (self.p1_stood and self.p2_stood)
 
-        # 👤 玩家視角：看到自己的牌，看不到電腦的
-        p1_display = f"{self.p1_hand} (總分: {sum(self.p1_hand)})"
+        # --- 顯示你的手牌 ---
+        # 初始牌 p1_hand[0] 是隱藏的，後續抽的牌 (p1_hand[1:]) 是公開的
         p1_status = " (已跳過)" if self.p1_stood else ""
+        if game_ended:
+            p1_display = f"{self.p1_hand} (總分: {sum(self.p1_hand)})"
+        else:
+            # 第一張是暗牌[?], 後面的是明牌
+            known_p1 = self.p1_hand[1:]
+            if known_p1:
+                p1_display = f"[?, {', '.join(map(str, known_p1))}]"
+            else:
+                p1_display = "[?]"
+
         embed.add_field(name=f"👤 {self.p1.name}", value=p1_display + p1_status, inline=False)
-        
-        # 🤖 電腦視角：對手看到的只有隱藏的牌
+
+        # --- 顯示電腦手牌 ---
+        p2_status = " (已跳過)" if self.p2_stood else ""
+        p2_title = f"👤 {self.p2.name}" if self.p2 else "🤖 電腦"
         if game_ended:
             p2_display = f"{self.p2_hand} (總分: {sum(self.p2_hand)})"
         else:
-            # 這裡把 [self.p2_hand[0], ?] 改成全隱藏或數量提示
-            # 只告知對方有幾張牌，但完全不透漏牌值
-            hidden_count = len(self.p2_hand)
-            p2_display = f"🤖 電腦目前手上有 {hidden_count} 張牌 (皆為隱藏)"
-            
-        p2_status = " (已跳過)" if self.p2_stood else ""
-        p2_title = f"👤 {self.p2.name}" if self.p2 else "🤖 電腦"
+            # 電腦同理，第一張暗牌[?], 後續抽的是明牌
+            known_p2 = self.p2_hand[1:]
+            if known_p2:
+                p2_display = f"[?, {', '.join(map(str, known_p2))}]"
+            else:
+                p2_display = "[?]"
+
         embed.add_field(name=p2_title, value=p2_display + p2_status, inline=False)
         
         if log_text:
@@ -123,17 +135,19 @@ class GameView(View):
 
     @discord.ui.button(label="抽牌", style=discord.ButtonStyle.primary)
     async def hit(self, interaction: discord.Interaction, button: Button):
-        # 1. 抽牌
         if self.is_multi:
             if self.turn == self.p1:
-                self.p1_hand.append(self.deck.pop())
-                log = f"🃏 {self.turn.name} 選擇了【抽牌】。"
+                new_card = self.deck.pop()
+                self.p1_hand.append(new_card)
+                log = f"🃏 {self.turn.name} 抽到了一張【{new_card}】。"
             else:
-                self.p2_hand.append(self.deck.pop())
-                log = f"🃏 {self.turn.name} 選擇了【抽牌】。"
+                new_card = self.deck.pop()
+                self.p2_hand.append(new_card)
+                log = f"🃏 {self.turn.name} 抽到了一張【{new_card}】。"
         else:
-            self.p1_hand.append(self.deck.pop())
-            log = f"🃏 {self.p1.name} 選擇了【抽牌】。"
+            new_card = self.deck.pop()
+            self.p1_hand.append(new_card)
+            log = f"🃏 你抽到了一張【{new_card}】。"
         
         # 2. 換回合
         if self.is_multi:
@@ -179,17 +193,14 @@ class GameView(View):
             await self.computer_decision(interaction, log)
 
     async def computer_decision(self, interaction, log):
-        # 電腦算計玩家：根據玩家已抽牌數推測點數
-        # 初始一張牌平均點數約 6，每多抽一張牌，電腦評估對手變大的機率
+        # 電腦現在可以算計你已經抽到的牌 (p1_hand[1:])
         my_total = sum(self.p2_hand)
-        player_cards_count = len(self.p1_hand)
+        # 電腦觀察你的總點數（扣掉暗牌部分，這裡假設暗牌視為平均值 6）
+        player_visible_total = sum(self.p1_hand[1:]) + 6
         
-        # 智慧決策：如果對手抽牌越少，代表對手越可能拿到大牌或好牌
-        # 電腦傾向於將自己的點數維持在 16~18 之間
-        if my_total < 16:
+        # 智慧決策：如果你的明牌點數很高，電腦風險評估會變高
+        if my_total < 16 or (player_visible_total > 12 and my_total < 18):
             decision = "抽牌"
-        elif my_total <= 18 and player_cards_count < 2:
-            decision = "抽牌"  # 對手抽很少，電腦不敢賭，選擇搏一下
         else:
             decision = "跳過"
 
@@ -198,12 +209,13 @@ class GameView(View):
         if decision == "抽牌":
             new_card = self.deck.pop()
             self.p2_hand.append(new_card)
-            log += f"\n🤖 電腦根據你的行為，決定【抽牌】。"
+            # 在紀錄中揭露電腦抽到了什麼牌
+            log += f"\n🤖 電腦抽到了一張【{new_card}】。"
             self.is_player_turn = True  # 換回玩家
             await interaction.edit_original_response(embed=self.get_embed("電腦回合", log), view=self)
         else:
             self.p2_stood = True
-            log += "\n🤖 電腦決定【跳過】。"
+            log += "\n🤖 電腦選擇了【跳過】。"
             if self.p1_stood:
                 await self.show_result(interaction)
             else:
