@@ -89,36 +89,28 @@ class GameView(View):
 
     def get_embed(self, title, log_text=""):
         embed = discord.Embed(title=title, color=discord.Color.dark_purple())
-        
-        # --- 玩家手牌邏輯 ---
-        # 顯示玩家所有已抽到的牌，但在未結束前不顯示點數 (或顯示點數皆可)
-        # 這裡改為顯示完整手牌，讓你不會因為看不到牌而爆掉
-        p1_hand_display = f"{self.p1_hand} (點數: {sum(self.p1_hand)})"
-        
-        # --- 電腦手牌邏輯 ---
         game_ended = (self.p1_stood and self.p2_stood)
-        if game_ended:
-            p2_hand_display = f"{self.p2_hand} (總分: {sum(self.p2_hand)})"
-        else:
-            # 電腦保持第一張顯示，其他用 ? 隱藏，符合博弈規則
-            hidden_count = len(self.p2_hand) - 1
-            if hidden_count > 0:
-                p2_hand_display = f"[{self.p2_hand[0]}, " + ", ".join(["?"] * hidden_count) + "]"
-            else:
-                p2_hand_display = f"[{self.p2_hand[0]}]"
-            
-        # 狀態標記
+
+        # 👤 玩家視角：看到自己的牌，看不到電腦的
+        p1_display = f"{self.p1_hand} (總分: {sum(self.p1_hand)})"
         p1_status = " (已跳過)" if self.p1_stood else ""
+        embed.add_field(name=f"👤 {self.p1.name}", value=p1_display + p1_status, inline=False)
+        
+        # 🤖 電腦視角：對手看到的只有隱藏的牌
+        if game_ended:
+            p2_display = f"{self.p2_hand} (總分: {sum(self.p2_hand)})"
+        else:
+            # 這裡把 [self.p2_hand[0], ?] 改成全隱藏或數量提示
+            # 只告知對方有幾張牌，但完全不透漏牌值
+            hidden_count = len(self.p2_hand)
+            p2_display = f"🤖 電腦目前手上有 {hidden_count} 張牌 (皆為隱藏)"
+            
         p2_status = " (已跳過)" if self.p2_stood else ""
-        
-        embed.add_field(name=f"👤 {self.p1.name}", value=p1_hand_display + p1_status, inline=False)
         p2_title = f"👤 {self.p2.name}" if self.p2 else "🤖 電腦"
-        embed.add_field(name=p2_title, value=p2_hand_display + p2_status, inline=False)
+        embed.add_field(name=p2_title, value=p2_display + p2_status, inline=False)
         
-        # 戰況紀錄
         if log_text:
             embed.add_field(name="📜 戰況紀錄", value=log_text, inline=False)
-            
         return embed
 
     def switch_turn(self):
@@ -186,31 +178,18 @@ class GameView(View):
             self.is_player_turn = False
             await self.computer_decision(interaction, log)
 
-    def calculate_risk(self):
-        # 統計剩餘牌堆中 > 5 的牌比例
-        big_cards = sum(1 for card in self.deck if card > 5)
-        return big_cards / len(self.deck)  # 返回大牌機率
-
     async def computer_decision(self, interaction, log):
-        # --- 電腦算牌邏輯 ---
-        # 1. 觀察玩家已知牌 (p1_hand[0])
-        # 2. 觀察剩餘牌堆的威脅 (簡單機率推算)
+        # 電腦算計玩家：根據玩家已抽牌數推測點數
+        # 初始一張牌平均點數約 6，每多抽一張牌，電腦評估對手變大的機率
         my_total = sum(self.p2_hand)
+        player_cards_count = len(self.p1_hand)
         
-        # 計算剩餘牌堆的風險
-        risk = self.calculate_risk()
-        
-        # 簡單策略：如果自己點數已經 16+，風險過高，選擇跳過
-        # 如果對手牌面 (已知) 很大，電腦會被迫抽牌嘗試追趕
-        opponent_visible = self.p1_hand[0]
-        
-        # 決策：
-        if my_total <= 14:
+        # 智慧決策：如果對手抽牌越少，代表對手越可能拿到大牌或好牌
+        # 電腦傾向於將自己的點數維持在 16~18 之間
+        if my_total < 16:
             decision = "抽牌"
-        elif my_total <= 17 and opponent_visible >= 7:
-            decision = "抽牌"  # 看到對方牌大，冒險一下
-        elif my_total <= 16 and risk < 0.5:
-            decision = "抽牌"  # 剩餘牌堆安全，繼續抽
+        elif my_total <= 18 and player_cards_count < 2:
+            decision = "抽牌"  # 對手抽很少，電腦不敢賭，選擇搏一下
         else:
             decision = "跳過"
 
@@ -219,7 +198,7 @@ class GameView(View):
         if decision == "抽牌":
             new_card = self.deck.pop()
             self.p2_hand.append(new_card)
-            log += f"\n🤖 電腦看到你的牌，決定【抽牌】。"
+            log += f"\n🤖 電腦根據你的行為，決定【抽牌】。"
             self.is_player_turn = True  # 換回玩家
             await interaction.edit_original_response(embed=self.get_embed("電腦回合", log), view=self)
         else:
